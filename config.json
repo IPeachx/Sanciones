@@ -1,0 +1,40 @@
+{
+  "logChannelId": "1419169601769574440",
+  "sanctionRoles": ["1404587368262008862"],
+  "annulRoles": ["1404587368262008862"],
+  "listRoles": ["1404584655188922489", "1404585179263008839"],
+  "embedColor": "#FFC0CB",
+
+  "limits": { "warns": 3, "strikes": 7 },
+
+  "dmEmbed": {
+    "color": "#FFC0CB",
+    "logoUrl": "https://media.discordapp.net/attachments/1163056754997874779/1416221323449077840/LOGO-LOLLIPOP-SV.png?ex=68cff1a3&is=68cea023&hm=7d31b9886f804f119737a2fc1a92a7712bb2034b1b98456390ff0f17d5b713a4&=&format=webp&quality=lossless&width=1541&height=856",
+    "imageUrl": "https://cdn.discordapp.com/attachments/1358209223183569230/1419118823847759994/41f0q3z.gif?ex=68d098e5&is=68cf4765&hm=62d7f24ceaeddd7ae107905a890cf230d67645f200e27b9c4bb3addf7a86dc16&",
+    "footer": "Lollipop • Moderation notice",
+    "titleWarn": "Has recibido un WARN",
+    "titleStrike": "Has recibido un STRIKE",
+    "titleAnnul": "Sanción anulada"
+  },
+
+  "listEmbed": {
+    "title": "📋 Lista de sanciones activas",
+    "logoUrl": "https://media.discordapp.net/attachments/1163056754997874779/1416221323449077840/LOGO-LOLLIPOP-SV.png?ex=68cff1a3&is=68cea023&hm=7d31b9886f804f119737a2fc1a92a7712bb2034b1b98456390ff0f17d5b713a4&=&format=webp&quality=lossless&width=1541&height=856",
+    "imageUrl": "https://cdn.discordapp.com/attachments/1358209223183569230/1419118823847759994/41f0q3z.gif?ex=68d098e5&is=68cf4765&hm=62d7f24ceaeddd7ae107905a890cf230d67645f200e27b9c4bb3addf7a86dc16&",
+    "footer": "ℓσℓℓιρσρ • Panel de Sanciones",
+    "public": true
+    },
+
+    "panelEmbed": {
+    "title": "Panel de sanciones • Lollipop",
+    "color": "#FFC0CB",
+    "logoUrl": "https://media.discordapp.net/attachments/1163056754997874779/1416221323449077840/LOGO-LOLLIPOP-SV.png?ex=68cff1a3&is=68cea023&hm=7d31b9886f804f119737a2fc1a92a7712bb2034b1b98456390ff0f17d5b713a4&=&format=webp&quality=lossless&width=1541&height=856",
+    "imageUrl": "https://cdn.discordapp.com/attachments/1358209223183569230/1419118823847759994/41f0q3z.gif?ex=68d098e5&is=68cf4765&hm=62d7f24ceaeddd7ae107905a890cf230d67645f200e27b9c4bb3addf7a86dc16&",
+    "footer": "Lollipop • Moderation panel"
+
+
+  }
+}
+
+
+ 

@@ -1,0 +1,18 @@
+{
+  "name": "sanciones-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --env-file=.env src/index.js",
+    "register": "node src/deploy-commands.js"
+  },
+  "engines": {
+    "node": ">=20.11"
+    },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5"
+  }
+}
