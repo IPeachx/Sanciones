@@ -5,6 +5,9 @@
   "listRoles": ["1404584655188922489", "1404585179263008839"],
   "embedColor": "#FFC0CB",
 
+  "logSanctionsChannelId": "1419169601769574440",
+  "logAnnulsChannelId": "1421674837109116978",
+
   "limits": { "warns": 3, "strikes": 7 },
 
   "dmEmbed": {
