@@ -199,12 +199,28 @@ client.once(Events.ClientReady, () => {
 // ====== Interacciones ======
 client.on('interactionCreate', async (interaction) => {
   try {
-    // Slash opcional: /panel-sanciones
+    // Slash opcional: /panel-sanciones y /lista-sanciones
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'panel-sanciones') {
         if (!(await ensureHasPanelRole(interaction))) return;
         await interaction.channel.send({ embeds: [panelInfoEmbed()], components: panelComponents() });
         return interaction.reply({ ephemeral: true, content: '✅ Panel enviado.' });
+      } else if (interaction.commandName === 'lista-sanciones') {
+        if (!(await ensureHasPanelRole(interaction))) return;
+        const db = loadDB();
+        const gid = interaction.guildId;
+        ensureGuild(db, gid);
+        const all = db.guilds[gid].sanctions || [];
+        if (!all.length) {
+          return interaction.reply({ ephemeral: true, content: '📭 No hay sanciones registradas.' });
+        }
+        const last = all.slice(-10).reverse();
+        const lines = last.map((s, i) => {
+          const fecha = s.createdAt ? new Date(s.createdAt).toLocaleString('es-MX') : '—';
+          return `**${i + 1}. ${s.type.toUpperCase()}** — <@${s.userId}> • Ticket: \`${s.ticket ?? '—'}\` • ${s.active ? 'Activo' : 'Anulado'} • ${fecha}`;
+        }).join('\n');
+        const e = baseEmbed().setTitle('📋 Últimas sanciones').setDescription(lines);
+        return interaction.reply({ ephemeral: true, embeds: [e] });
       }
       return;
     }
@@ -392,19 +408,18 @@ client.on('interactionCreate', async (interaction) => {
         } catch {}
 
         // ===== Registro de auditoría: sanción aplicada
-auditWrite({
-  action: 'sanction_applied',
-  guildId: gid,
-  byUserId: interaction.user.id,   // quien presionó el botón
-  targetUserId: uid,               // sancionado
-  type: record.type,               // 'warn' | 'strike'
-  reason: record.reason,
-  ticket: record.ticket,
-  authorizerId: aid,               // "Staff que autoriza"
-  logMessageId: (db.guilds[gid].sanctions?.slice(-1)[0]?.logMessageId) || null,
-  counts: { warns: post.warns, strikes: post.strikes, maxWarn: MAX_WARN, maxStrike: MAX_STRIKE },
-});
-
+        auditWrite({
+          action: 'sanction_applied',
+          guildId: gid,
+          byUserId: interaction.user.id,   // quien presionó el botón
+          targetUserId: uid,               // sancionado
+          type: record.type,               // 'warn' | 'strike'
+          reason: record.reason,
+          ticket: record.ticket,
+          authorizerId: aid,               // "Staff que autoriza"
+          logMessageId: (db.guilds[gid].sanctions?.slice(-1)[0]?.logMessageId) || null,
+          counts: { warns: post.warns, strikes: post.strikes, maxWarn: MAX_WARN, maxStrike: MAX_STRIKE },
+        });
 
         saveDB(db);
 
@@ -511,21 +526,20 @@ auditWrite({
         } catch {}
 
         // ===== Registro de auditoría: sanción anulada
-auditWrite({
-  action: 'sanction_annulled',
-  guildId: gid,
-  byUserId: interaction.user.id,   // quien presionó el botón
-  targetUserId: target.userId,
-  type: target.type,
-  originalTicket: target.ticket || null,
-  annulTicket: target.annulTicket || null,
-  originalReason: target.reason || null,
-  annulReason: motivo,
-  authorizerId: aid,               // "Staff que autoriza"
-  deletedLogMessageId: target.logMessageId || null,
-  counts: { warns: postAfter.warns, strikes: postAfter.strikes, maxWarn: MAX_WARN, maxStrike: MAX_STRIKE },
-});
-
+        auditWrite({
+          action: 'sanction_annulled',
+          guildId: gid,
+          byUserId: interaction.user.id,   // quien presionó el botón
+          targetUserId: target.userId,
+          type: target.type,
+          originalTicket: target.ticket || null,
+          annulTicket: target.annulTicket || null,
+          originalReason: target.reason || null,
+          annulReason: motivo,
+          authorizerId: aid,               // "Staff que autoriza"
+          deletedLogMessageId: target.logMessageId || null,
+          counts: { warns: postAfter.warns, strikes: postAfter.strikes, maxWarn: MAX_WARN, maxStrike: MAX_STRIKE },
+        });
 
         saveDB(db);
         return interaction.reply({ ephemeral: true, content: '♻️ Sanción anulada correctamente.' });
@@ -577,33 +591,82 @@ auditWrite({
   }
 });
 
-// ====== Comando por texto: !panel-sancion (mismo rol) ======
+// ====== Comando por texto: !panel-sancion + !export-auditoria ======
 client.on('messageCreate', async (message) => {
   try {
     if (!message.guild || message.author.bot) return;
 
     const msg = message.content.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (msg !== TEXT_COMMAND) return;
 
-    const member = await message.guild.members.fetch(message.author.id).catch(() => null);
-    if (!member) return;
+    // ===== !panel-sancion =====
+    if (msg === TEXT_COMMAND) {
+      const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+      if (!member) return;
 
-    if (!member.roles.cache.has(ROLE_ALLOWED_PANEL)) {
-      return message.reply('⛔ No tienes permisos para enviar el panel.');
+      if (!member.roles.cache.has(ROLE_ALLOWED_PANEL)) {
+        return message.reply('⛔ No tienes permisos para enviar el panel.');
+      }
+      if (!message.channel.isTextBased()) {
+        return message.reply('⚠️ Este canal no permite enviar el panel.');
+      }
+
+      await message.channel.send({ embeds: [panelInfoEmbed()], components: panelComponents() });
+
+      // Respuesta que se borra sola (texto no puede ser "solo visible")
+      const ack = await message.reply('✅ Panel enviado.');
+      setTimeout(() => ack.delete().catch(() => {}), 2000);
+      return;
     }
-    if (!message.channel.isTextBased()) {
-      return message.reply('⚠️ Este canal no permite enviar el panel.');
+
+    // ===== !export-auditoria [YYYY-MM|todo] =====
+    if (msg.startsWith('!export-auditoria')) {
+      const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+      if (!member) return;
+      if (!member.roles.cache.has(ROLE_ALLOWED_PANEL)) {
+        return message.reply('⛔ No tienes permisos para exportar la auditoría.');
+      }
+
+      const args = message.content.trim().split(/\s+/).slice(1);
+      const param = (args[0] || '').toLowerCase();
+
+      // Elegimos archivo: por mes (YYYY-MM), todo, o mes actual por defecto
+      let fileName, filePath;
+      if (/^\d{4}-\d{2}$/.test(param)) {
+        fileName = `audit-${param}.jsonl`;
+        filePath = path.join(AUDIT_DIR, fileName);
+      } else if (param === 'todo') {
+        fileName = 'audit.jsonl';
+        filePath = path.join(AUDIT_DIR, fileName);
+      } else {
+        const now = new Date();
+        const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        fileName = `audit-${ym}.jsonl`;
+        filePath = path.join(AUDIT_DIR, fileName);
+      }
+
+      if (!fs.existsSync(filePath)) {
+        return message.reply(`⚠️ No encontré **${fileName}** aún. Genera alguna sanción/anulación y vuelve a intentar.`);
+      }
+
+      // Evitamos archivos gigantes (límite típico 8MB)
+      try {
+        const stat = fs.statSync(filePath);
+        const limit = 8 * 1024 * 1024; // 8MB aprox
+        if (stat.size > limit && fileName === 'audit.jsonl') {
+          return message.reply('⚠️ El archivo global es muy grande. Prueba con un mes específico: `!export-auditoria 2025-09`');
+        }
+      } catch {}
+
+      await message.channel.send({
+        content: `📄 Exportando **${fileName}**`,
+        files: [{ attachment: filePath, name: fileName }],
+      }).catch(() => message.reply('❌ No pude adjuntar el archivo (¿excede el límite del canal?).'));
+      return;
     }
-
-    await message.channel.send({ embeds: [panelInfoEmbed()], components: panelComponents() });
-
-    // Respuesta que se borra sola (texto no puede ser "solo visible")
-    const ack = await message.reply('✅ Panel enviado.');
-    setTimeout(() => ack.delete().catch(() => {}), 2000);
 
   } catch (e) {
-    console.error('Error en !panel-sancion:', e);
-    try { await message.reply('⚠️ Ocurrió un error al enviar el panel.'); } catch {}
+    console.error('Error en messageCreate:', e);
+    try { await message.reply('⚠️ Ocurrió un error.'); } catch {}
   }
 });
 
