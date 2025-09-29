@@ -341,6 +341,7 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Usuario', value: `<@${uid}> (\`${uid}\`)`, inline: true },
                 { name: 'Tipo', value: record.type.toUpperCase(), inline: true },
                 { name: 'Motivo', value: record.reason || '—' },
+                { name: 'Staff (ejecutó el botón)', value: `<@${interaction.user.id}> (\`${interaction.user.id}\`)` },
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)`, inline: true },
                 { name: 'Ticket', value: String(record.ticket), inline: true },
                 { name: 'Acumulación', value: `Warns ${post.warns}/${MAX_WARN} · Strikes ${post.strikes}/${MAX_STRIKE}` },
@@ -452,6 +453,7 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Motivo original', value: target.reason || '—' },
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)` },
                 { name: 'Motivo de anulación', value: motivo || '—' },
+                { name: 'Staff (ejecutó el botón)', value: `<@${interaction.user.id}> (\`${interaction.user.id}\`)` },
                 { name: 'Acumulación', value: `Warns ${postAfter.warns}/${MAX_WARN} · Strikes ${postAfter.strikes}/${MAX_STRIKE}` },
               );
             await chAnnuls.send({ embeds: [e] }).catch(() => {});
