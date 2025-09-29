@@ -208,7 +208,7 @@ client.on('interactionCreate', async (interaction) => {
         const tiUser   = new TextInputBuilder().setCustomId('usuario').setLabel('Usuario (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
         const tiType   = new TextInputBuilder().setCustomId('tipo').setLabel('Tipo (warn o strike)').setStyle(TextInputStyle.Short).setRequired(true);
         const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo').setStyle(TextInputStyle.Paragraph).setRequired(true);
-        const tiAuth   = new TextInputBuilder().setCustomId('autor').setLabel('Staff que sanciona (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiAuth   = new TextInputBuilder().setCustomId('autor').setLabel('Staff que autoriza (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
         const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Número de ticket').setStyle(TextInputStyle.Short).setRequired(true);
         modal.addComponents(
           new ActionRowBuilder().addComponents(tiUser),
@@ -227,7 +227,7 @@ client.on('interactionCreate', async (interaction) => {
         const modal = new ModalBuilder().setCustomId('modal_anular').setTitle('Anular sanción');
         const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Número de ticket a anular').setStyle(TextInputStyle.Short).setRequired(true);
         const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo de anulación').setStyle(TextInputStyle.Paragraph).setRequired(true);
-        const tiAuth   = new TextInputBuilder().setCustomId('autor').setLabel('Staff que anula (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiAuth   = new TextInputBuilder().setCustomId('autor').setLabel('Staff que autoriza (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
         modal.addComponents(
           new ActionRowBuilder().addComponents(tiTicket),
           new ActionRowBuilder().addComponents(tiReason),
