@@ -30,7 +30,7 @@ const cfg = {
   logSanctionsChannelId: process.env.LOG_SANCTIONS_CHANNEL_ID,
   logAnnulsChannelId: process.env.LOG_ANNULS_CHANNEL_ID,
   dmEmbed: {
-    color: process.env.DM_COLOR || '#FFCC8B',
+    color: process.env.DM_COLOR || '#FFC0CB',
     logoUrl: process.env.DM_LOGO_URL || '',
     imageUrl: process.env.DM_IMAGE_URL || '',
     footer: process.env.DM_FOOTER || 'Lollipop RP',
@@ -136,7 +136,7 @@ async function ensureHasPanelRole(interaction) {
 
 // ====== Embeds/UI ======
 function baseEmbed() {
-  const e = new EmbedBuilder().setColor(cfg.dmEmbed?.color || '#FFCC8B').setTimestamp(new Date());
+  const e = new EmbedBuilder().setColor(cfg.dmEmbed?.color || '#FFC0CB').setTimestamp(new Date());
   if (cfg.dmEmbed?.logoUrl) e.setThumbnail(cfg.dmEmbed.logoUrl);
   if (cfg.dmEmbed?.imageUrl) e.setImage(cfg.dmEmbed.imageUrl);
   if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
