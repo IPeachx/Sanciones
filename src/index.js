@@ -214,7 +214,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // ANULAR — por TIPO (sin ticket)
+      // ANULAR — por TIPO (pide Ticket de anulación, SOLO informativo)
       if (interaction.customId === 'btn_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -244,11 +244,18 @@ client.on('interactionCreate', async (interaction) => {
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
 
+        const tiAnnTicket = new TextInputBuilder()
+          .setCustomId('annul_ticket')
+          .setLabel('Ticket (de anulación) — opcional')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false);
+
         modal.addComponents(
           new ActionRowBuilder().addComponents(tiUser),
           new ActionRowBuilder().addComponents(tiType),
           new ActionRowBuilder().addComponents(tiReason),
           new ActionRowBuilder().addComponents(tiAuth),
+          new ActionRowBuilder().addComponents(tiAnnTicket),
         );
 
         return interaction.showModal(modal);
@@ -374,18 +381,20 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // ====== ANULAR SANCIÓN — por TIPO (sin ticket) ======
+      // ====== ANULAR SANCIÓN — por TIPO (con Ticket de anulación opcional) ======
       if (interaction.customId === 'modal_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
-        const rawUser  = interaction.fields.getTextInputValue('usuario')?.trim();
-        const rawType  = interaction.fields.getTextInputValue('tipo')?.trim().toLowerCase();
-        const motivo   = interaction.fields.getTextInputValue('motivo')?.trim();
-        const autorRaw = interaction.fields.getTextInputValue('autor')?.trim();
+        const rawUser   = interaction.fields.getTextInputValue('usuario')?.trim();
+        const rawType   = interaction.fields.getTextInputValue('tipo')?.trim().toLowerCase();
+        const motivo    = interaction.fields.getTextInputValue('motivo')?.trim();
+        const autorRaw  = interaction.fields.getTextInputValue('autor')?.trim();
+        const annRaw    = interaction.fields.getTextInputValue('annul_ticket')?.trim();
 
         const uid  = parseUser(rawUser);
         const aid  = parseUser(autorRaw);
         const tipo = rawType === 'warn' || rawType === 'strike' ? rawType : null;
+        const annulTicket = annRaw ? annRaw.replace(/[^\d]/g, '') : null;
 
         if (!uid || !tipo || !motivo || !aid) {
           return interaction.reply({
@@ -415,6 +424,7 @@ client.on('interactionCreate', async (interaction) => {
         target.annulReason = motivo;
         target.annulAuthorId = aid;
         target.annulAt = Date.now();
+        if (annulTicket) target.annulTicket = annulTicket;
 
         // 1) Borrar el mensaje de log de la sanción (si lo tenemos)
         try {
@@ -428,7 +438,7 @@ client.on('interactionCreate', async (interaction) => {
         // ===== Conteo actual (después de anular)
         const postAfter = getCurrentCounts(db, gid, uid);
 
-        // 2) Enviar LOG de anulación a su canal específico (incluye Acumulación)
+        // 2) Enviar LOG de anulación a su canal específico (incluye Acumulación y tickets)
         try {
           const chAnnuls = getLogChannelForAnnuls(interaction.guild);
           if (chAnnuls) {
@@ -437,7 +447,8 @@ client.on('interactionCreate', async (interaction) => {
               .setFields(
                 { name: 'Usuario', value: `<@${target.userId}> (\`${target.userId}\`)`, inline: true },
                 { name: 'Tipo', value: target.type.toUpperCase(), inline: true },
-                ...(target.ticket ? [{ name: 'Ticket', value: String(target.ticket), inline: true }] : []),
+                ...(target.ticket ? [{ name: 'Ticket original', value: String(target.ticket), inline: true }] : []),
+                ...(target.annulTicket ? [{ name: 'Ticket (anulación)', value: String(target.annulTicket), inline: true }] : []),
                 { name: 'Motivo original', value: target.reason || '—' },
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)` },
                 { name: 'Motivo de anulación', value: motivo || '—' },
@@ -447,14 +458,14 @@ client.on('interactionCreate', async (interaction) => {
           }
         } catch {}
 
-        // 3) DM al usuario avisando la anulación (incluye Acumulación)
+        // 3) DM al usuario avisando la anulación (muestra el Ticket de anulación si lo puso)
         try {
           const eDM = baseEmbed()
             .setTitle('Tu sanción ha sido anulada')
             .setDescription(
               [
                 `**Tipo:** ${target.type.toUpperCase()}`,
-                ...(target.ticket ? [`**Ticket:** ${target.ticket}`] : []),
+                ...(annulTicket ? [`**Ticket:** ${annulTicket}`] : []),
                 `**Motivo de anulación:** ${motivo}`,
                 `**Staff:** <@${aid}>`,
                 '',
@@ -534,7 +545,11 @@ client.on('messageCreate', async (message) => {
     }
 
     await message.channel.send({ embeds: [panelInfoEmbed()], components: panelComponents() });
-    return message.reply('✅ Panel enviado.');
+
+    // Respuesta que se borra sola (texto no puede ser "solo visible")
+    const ack = await message.reply('✅ Panel enviado.');
+    setTimeout(() => ack.delete().catch(() => {}), 2000);
+
   } catch (e) {
     console.error('Error en !panel-sancion:', e);
     try { await message.reply('⚠️ Ocurrió un error al enviar el panel.'); } catch {}
