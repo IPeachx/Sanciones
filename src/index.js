@@ -18,12 +18,12 @@ import {
 } from 'discord.js';
 
 // ====== Rol único para TODO el panel (3 botones y comandos) ======
-const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← pon aquí el rol que dará acceso
+const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← cambia aquí tu rol
 
 // ====== Comando por texto para enviar el panel ======
 const TEXT_COMMAND = '!panel-sancion';
 
-// ====== Config desde .env (opcional) ======
+// ====== Config desde .env ======
 const cfg = {
   guildId: process.env.GUILD_ID,
   logChannelId: process.env.LOG_CHANNEL_ID,
@@ -37,7 +37,7 @@ const cfg = {
   },
   panelEmbed: {
     title: process.env.PANEL_TITLE || 'Panel de sanciones',
-    color: process.env.PANEL_COLOR || '#FFCC8B',
+    color: process.env.PANEL_COLOR || '#FFC0CB', // rosita claro por defecto
     footer: process.env.PANEL_FOOTER || 'Solo Staff autorizado',
   },
   limits: {
@@ -74,10 +74,10 @@ function ensureGuild(db, gid) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,   // roles/miembros
-    GatewayIntentBits.GuildMessages,  // comandos por texto
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.MessageContent, // contenido de mensajes
+    GatewayIntentBits.MessageContent,
   ],
   partials: [Partials.Channel],
 });
@@ -152,11 +152,11 @@ function panelComponents() {
   return [row];
 }
 
-// ====== UI: Panel "Lollipop" con rosita claro ======
+// Panel estilo “Lollipop”
 function panelInfoEmbed() {
   const e = new EmbedBuilder()
     .setTitle('Panel de sanciones • Lollipop')
-    .setColor('#FFC0CB') // rosita claro
+    .setColor(cfg.panelEmbed?.color || '#FFC0CB') // rosita claro
     .setDescription(
       [
         '### Botones',
@@ -172,7 +172,6 @@ function panelInfoEmbed() {
     )
     .setTimestamp(new Date());
 
-  // Logo y banner (si los definiste en Railway)
   if (cfg.dmEmbed?.logoUrl)  e.setThumbnail(cfg.dmEmbed.logoUrl);
   if (cfg.dmEmbed?.imageUrl) e.setImage(cfg.dmEmbed.imageUrl);
   if (cfg.dmEmbed?.footer)   e.setFooter({ text: cfg.dmEmbed.footer });
@@ -220,35 +219,16 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // ANULAR — orden solicitado: Usuario, Motivo, Staff que autoriza, Ticket
+      // ANULAR — orden: Usuario, Motivo, Staff que autoriza, Ticket
       if (interaction.customId === 'btn_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
         const modal = new ModalBuilder().setCustomId('modal_anular').setTitle('Anular sanción');
 
-        const tiUser = new TextInputBuilder()
-          .setCustomId('usuario')
-          .setLabel('Usuario (mención o ID)')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        const tiReason = new TextInputBuilder()
-          .setCustomId('motivo')
-          .setLabel('Motivo de anulación')
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true);
-
-        const tiAuth = new TextInputBuilder()
-          .setCustomId('autor')
-          .setLabel('Staff que autoriza (mención o ID)')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        const tiTicket = new TextInputBuilder()
-          .setCustomId('ticket')
-          .setLabel('Ticket')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
+        const tiUser = new TextInputBuilder().setCustomId('usuario').setLabel('Usuario (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo de anulación').setStyle(TextInputStyle.Paragraph).setRequired(true);
+        const tiAuth = new TextInputBuilder().setCustomId('autor').setLabel('Staff que autoriza (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Ticket').setStyle(TextInputStyle.Short).setRequired(true);
 
         modal.addComponents(
           new ActionRowBuilder().addComponents(tiUser),
@@ -272,7 +252,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // Modals submit (re-validamos el mismo rol)
+    // Modals submit
     if (interaction.isModalSubmit()) {
       const db = loadDB();
       if (!interaction.inGuild()) {
@@ -280,15 +260,15 @@ client.on('interactionCreate', async (interaction) => {
       }
       const gid = interaction.guildId;
 
-      // Aplicar sanción
+      // ====== APLICAR SANCIÓN ======
       if (interaction.customId === 'modal_sancionar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
-        const rawUser = interaction.fields.getTextInputValue('usuario')?.trim();
-        const tipo    = interaction.fields.getTextInputValue('tipo')?.trim().toLowerCase();
-        const motivo  = interaction.fields.getTextInputValue('motivo')?.trim();
-        const autorRaw= interaction.fields.getTextInputValue('autor')?.trim();
-        const ticketRaw=interaction.fields.getTextInputValue('ticket')?.trim();
+        const rawUser  = interaction.fields.getTextInputValue('usuario')?.trim();
+        const tipo     = interaction.fields.getTextInputValue('tipo')?.trim().toLowerCase();
+        const motivo   = interaction.fields.getTextInputValue('motivo')?.trim();
+        const autorRaw = interaction.fields.getTextInputValue('autor')?.trim();
+        const ticketRaw= interaction.fields.getTextInputValue('ticket')?.trim();
 
         const uid = parseUser(rawUser);
         const aid = parseUser(autorRaw);
@@ -299,7 +279,17 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         ensureGuild(db, gid);
-        const record = { type: tipo, userId: uid, reason: motivo, authorId: aid, ticket, active: true, createdAt: Date.now() };
+
+        const record = {
+          type: tipo,
+          userId: uid,
+          reason: motivo,
+          authorId: aid,
+          ticket,
+          active: true,
+          createdAt: Date.now(),
+          logMessageId: null, // ← guardaremos el mensaje del canal de sanciones
+        };
         db.guilds[gid].sanctions.push(record);
 
         // Auto STRIKE al llegar a MAX_WARN (sin consumir warns)
@@ -313,12 +303,11 @@ client.on('interactionCreate', async (interaction) => {
             ticket,
             active: true,
             createdAt: Date.now(),
+            logMessageId: null,
           });
         }
 
-        saveDB(db);
-
-        // Logs
+        // LOG a canal específico de sanciones
         try {
           const ch = getLogChannelForSanctions(interaction.guild);
           if (ch) {
@@ -331,9 +320,33 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)`, inline: true },
                 { name: 'Ticket', value: String(record.ticket), inline: true },
               );
-            await ch.send({ embeds: [e] }).catch(() => {});
+
+            const msg = await ch.send({ embeds: [e] }).catch(() => null);
+            if (msg?.id) {
+              // guarda el ID del mensaje de log en el registro recién creado
+              const list = db.guilds[gid].sanctions;
+              list[list.length - 1].logMessageId = msg.id;
+            }
           }
         } catch {}
+
+        // DM al usuario sancionado
+        try {
+          const eDM = baseEmbed()
+            .setTitle('Has recibido una sanción')
+            .setDescription(
+              [
+                `**Tipo:** ${record.type.toUpperCase()}`,
+                `**Motivo:** ${record.reason}`,
+                `**Ticket:** ${record.ticket}`,
+                `**Staff:** <@${aid}>`,
+              ].join('\n')
+            );
+          const u = await client.users.fetch(uid).catch(() => null);
+          if (u) await u.send({ embeds: [eDM] }).catch(() => {});
+        } catch {}
+
+        saveDB(db);
 
         const post = getCurrentCounts(db, gid, uid);
         return interaction.reply({
@@ -342,7 +355,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // Anular sanción — ahora exige Usuario + Ticket
+      // ====== ANULAR SANCIÓN ======
       if (interaction.customId === 'modal_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -356,10 +369,7 @@ client.on('interactionCreate', async (interaction) => {
         const ticket= ticketRaw?.replace(/[^\d]/g, '');
 
         if (!uid || !ticket || !motivo || !aid) {
-          return interaction.reply({
-            ephemeral: true,
-            content: '⚠️ Datos inválidos. Revisa usuario/ticket/motivo/autor.'
-          });
+          return interaction.reply({ ephemeral: true, content: '⚠️ Datos inválidos. Revisa usuario/ticket/motivo/autor.' });
         }
 
         ensureGuild(db, gid);
@@ -368,22 +378,28 @@ client.on('interactionCreate', async (interaction) => {
         // Solo anula si el ticket pertenece a ese usuario y está activo
         const target = list.find(s => s.ticket == ticket && s.active && s.userId === uid);
         if (!target) {
-          return interaction.reply({
-            ephemeral: true,
-            content: '⚠️ No se encontró una sanción activa para ese usuario y ticket.'
-          });
+          return interaction.reply({ ephemeral: true, content: '⚠️ No se encontró una sanción activa para ese usuario y ticket.' });
         }
 
+        // Marcar anulación
         target.active = false;
         target.annulReason = motivo;
         target.annulAuthorId = aid;
         target.annulAt = Date.now();
 
-        saveDB(db);
-
+        // 1) Borrar el mensaje de log de la sanción (si lo tenemos)
         try {
-          const ch = getLogChannelForAnnuls(interaction.guild);
-          if (ch) {
+          const chSanctions = getLogChannelForSanctions(interaction.guild);
+          if (chSanctions && target.logMessageId) {
+            const msg = await chSanctions.messages.fetch(target.logMessageId).catch(() => null);
+            if (msg) await msg.delete().catch(() => {});
+          }
+        } catch {}
+
+        // 2) Enviar LOG de anulación a su canal específico
+        try {
+          const chAnnuls = getLogChannelForAnnuls(interaction.guild);
+          if (chAnnuls) {
             const e = baseEmbed()
               .setTitle('♻️ Sanción anulada')
               .setFields(
@@ -394,14 +410,30 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)` },
                 { name: 'Motivo de anulación', value: motivo || '—' },
               );
-            await ch.send({ embeds: [e] }).catch(() => {});
+            await chAnnuls.send({ embeds: [e] }).catch(() => {});
           }
         } catch {}
 
+        // 3) DM al usuario avisando la anulación
+        try {
+          const eDM = baseEmbed()
+            .setTitle('Tu sanción ha sido anulada')
+            .setDescription(
+              [
+                `**Ticket:** ${ticket}`,
+                `**Motivo de anulación:** ${motivo}`,
+                `**Staff:** <@${aid}>`,
+              ].join('\n')
+            );
+          const u = await client.users.fetch(uid).catch(() => null);
+          if (u) await u.send({ embeds: [eDM] }).catch(() => {});
+        } catch {}
+
+        saveDB(db);
         return interaction.reply({ ephemeral: true, content: '♻️ Sanción anulada correctamente.' });
       }
 
-      // Buscar (submit)
+      // ====== BUSCAR ======
       if (interaction.customId === 'modal_buscar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -413,6 +445,7 @@ client.on('interactionCreate', async (interaction) => {
 
         ensureGuild(db, gid);
         const list = (db.guilds[gid].sanctions || []).filter(s => s.userId === uid);
+
         if (!list.length) {
           return interaction.reply({ ephemeral: true, content: '🔎 Sin resultados.' });
         }
