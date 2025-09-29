@@ -18,7 +18,7 @@ import {
 } from 'discord.js';
 
 // ====== Rol único para TODO el panel (3 botones y comandos) ======
-const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← cambia aquí tu rol si hace falta
+const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← tu rol
 
 // ====== Comando por texto para enviar el panel ======
 const TEXT_COMMAND = '!panel-sancion';
@@ -100,10 +100,10 @@ function parseUser(input) {
   return m ? m[1] : null;
 }
 function getCurrentCounts(db, gid, uid) {
-  const list = (db.guilds[gid]?.sanctions || []).filter(s => s.active && s.userId === uid);
+  const list = (db.guilds[gid]?.sanctions || []).filter(s => s.userId === uid);
   return {
-    warns: list.filter(s => s.type === 'warn').length,
-    strikes: list.filter(s => s.type === 'strike').length,
+    warns: list.filter(s => s.active && s.type === 'warn').length,
+    strikes: list.filter(s => s.active && s.type === 'strike').length,
   };
 }
 
@@ -194,7 +194,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // Botones (los 3 usan EL MISMO permiso)
     if (interaction.isButton()) {
-      // SANCIONAR (sin cambios)
+      // SANCIONAR
       if (interaction.customId === 'btn_sancionar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -214,7 +214,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // ANULAR — **CAMBIO PEDIDO**: por TIPO (sin ticket)
+      // ANULAR — por TIPO (sin ticket)
       if (interaction.customId === 'btn_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -254,7 +254,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // BUSCAR (sin cambios)
+      // BUSCAR
       if (interaction.customId === 'btn_buscar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -274,7 +274,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       const gid = interaction.guildId;
 
-      // ====== APLICAR SANCIÓN (sin cambios) ======
+      // ====== APLICAR SANCIÓN ======
       if (interaction.customId === 'modal_sancionar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -307,8 +307,8 @@ client.on('interactionCreate', async (interaction) => {
         db.guilds[gid].sanctions.push(record);
 
         // Auto STRIKE al llegar a MAX_WARN (sin consumir warns)
-        const counts = getCurrentCounts(db, gid, uid);
-        if (tipo === 'warn' && counts.warns >= MAX_WARN) {
+        const countsBefore = getCurrentCounts(db, gid, uid);
+        if (tipo === 'warn' && countsBefore.warns >= MAX_WARN) {
           db.guilds[gid].sanctions.push({
             type: 'strike',
             userId: uid,
@@ -321,7 +321,10 @@ client.on('interactionCreate', async (interaction) => {
           });
         }
 
-        // LOG a canal específico de sanciones + guardar msg.id
+        // ===== Conteo actual (después de registrar y posible auto-strike)
+        const post = getCurrentCounts(db, gid, uid);
+
+        // LOG a canal específico de sanciones + guardar msg.id (incluye Acumulación)
         try {
           const ch = getLogChannelForSanctions(interaction.guild);
           if (ch) {
@@ -333,6 +336,7 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Motivo', value: record.reason || '—' },
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)`, inline: true },
                 { name: 'Ticket', value: String(record.ticket), inline: true },
+                { name: 'Acumulación', value: `Warns ${post.warns}/${MAX_WARN} · Strikes ${post.strikes}/${MAX_STRIKE}` },
               );
 
             const msg = await ch.send({ embeds: [e] }).catch(() => null);
@@ -343,7 +347,7 @@ client.on('interactionCreate', async (interaction) => {
           }
         } catch {}
 
-        // DM al usuario sancionado
+        // DM al usuario sancionado (incluye Acumulación)
         try {
           const eDM = baseEmbed()
             .setTitle('Has recibido una sanción')
@@ -353,22 +357,24 @@ client.on('interactionCreate', async (interaction) => {
                 `**Motivo:** ${record.reason}`,
                 `**Ticket:** ${record.ticket}`,
                 `**Staff:** <@${aid}>`,
+                '',
+                `**Acumulación:** Warns ${post.warns}/${MAX_WARN} · Strikes ${post.strikes}/${MAX_STRIKE}`,
               ].join('\n')
             );
+
           const u = await client.users.fetch(uid).catch(() => null);
           if (u) await u.send({ embeds: [eDM] }).catch(() => {});
         } catch {}
 
         saveDB(db);
 
-        const post = getCurrentCounts(db, gid, uid);
         return interaction.reply({
           ephemeral: true,
           content: `✅ Sanción registrada.\nWarns: ${post.warns}/${MAX_WARN} • Strikes: ${post.strikes}/${MAX_STRIKE}`,
         });
       }
 
-      // ====== ANULAR SANCIÓN — **CAMBIO PEDIDO**: por TIPO (sin ticket) ======
+      // ====== ANULAR SANCIÓN — por TIPO (sin ticket) ======
       if (interaction.customId === 'modal_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -419,7 +425,10 @@ client.on('interactionCreate', async (interaction) => {
           }
         } catch {}
 
-        // 2) Enviar LOG de anulación a su canal específico
+        // ===== Conteo actual (después de anular)
+        const postAfter = getCurrentCounts(db, gid, uid);
+
+        // 2) Enviar LOG de anulación a su canal específico (incluye Acumulación)
         try {
           const chAnnuls = getLogChannelForAnnuls(interaction.guild);
           if (chAnnuls) {
@@ -432,12 +441,13 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Motivo original', value: target.reason || '—' },
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)` },
                 { name: 'Motivo de anulación', value: motivo || '—' },
+                { name: 'Acumulación', value: `Warns ${postAfter.warns}/${MAX_WARN} · Strikes ${postAfter.strikes}/${MAX_STRIKE}` },
               );
             await chAnnuls.send({ embeds: [e] }).catch(() => {});
           }
         } catch {}
 
-        // 3) DM al usuario avisando la anulación
+        // 3) DM al usuario avisando la anulación (incluye Acumulación)
         try {
           const eDM = baseEmbed()
             .setTitle('Tu sanción ha sido anulada')
@@ -447,6 +457,8 @@ client.on('interactionCreate', async (interaction) => {
                 ...(target.ticket ? [`**Ticket:** ${target.ticket}`] : []),
                 `**Motivo de anulación:** ${motivo}`,
                 `**Staff:** <@${aid}>`,
+                '',
+                `**Acumulación:** Warns ${postAfter.warns}/${MAX_WARN} · Strikes ${postAfter.strikes}/${MAX_STRIKE}`,
               ].join('\n')
             );
           const u = await client.users.fetch(uid).catch(() => null);
@@ -457,7 +469,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ ephemeral: true, content: '♻️ Sanción anulada correctamente.' });
       }
 
-      // ====== BUSCAR (sin cambios) ======
+      // ====== BUSCAR ======
       if (interaction.customId === 'modal_buscar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
