@@ -69,6 +69,23 @@ function ensureGuild(db, gid) {
   db.guilds ||= {};
   db.guilds[gid] ||= { sanctions: [] };
 }
+// ====== Auditoría (append-only) ======
+const AUDIT_DIR = path.join(process.cwd(), 'audit');
+function auditWrite(event) {
+  try {
+    if (!fs.existsSync(AUDIT_DIR)) fs.mkdirSync(AUDIT_DIR, { recursive: true });
+    const now = new Date();
+    const monthFile = path.join(
+      AUDIT_DIR,
+      `audit-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}.jsonl`
+    );
+    const line = JSON.stringify({ ts: now.toISOString(), ...event }) + '\n';
+    fs.appendFileSync(monthFile, line, 'utf8');                          // archivo por mes
+    fs.appendFileSync(path.join(AUDIT_DIR, 'audit.jsonl'), line, 'utf8'); // acumulado global
+  } catch (e) {
+    console.error('Audit write error:', e);
+  }
+}
 
 // ====== Cliente ======
 const client = new Client({
@@ -374,6 +391,21 @@ client.on('interactionCreate', async (interaction) => {
           if (u) await u.send({ embeds: [eDM] }).catch(() => {});
         } catch {}
 
+        // ===== Registro de auditoría: sanción aplicada
+auditWrite({
+  action: 'sanction_applied',
+  guildId: gid,
+  byUserId: interaction.user.id,   // quien presionó el botón
+  targetUserId: uid,               // sancionado
+  type: record.type,               // 'warn' | 'strike'
+  reason: record.reason,
+  ticket: record.ticket,
+  authorizerId: aid,               // "Staff que autoriza"
+  logMessageId: (db.guilds[gid].sanctions?.slice(-1)[0]?.logMessageId) || null,
+  counts: { warns: post.warns, strikes: post.strikes, maxWarn: MAX_WARN, maxStrike: MAX_STRIKE },
+});
+
+
         saveDB(db);
 
         return interaction.reply({
@@ -477,6 +509,23 @@ client.on('interactionCreate', async (interaction) => {
           const u = await client.users.fetch(uid).catch(() => null);
           if (u) await u.send({ embeds: [eDM] }).catch(() => {});
         } catch {}
+
+        // ===== Registro de auditoría: sanción anulada
+auditWrite({
+  action: 'sanction_annulled',
+  guildId: gid,
+  byUserId: interaction.user.id,   // quien presionó el botón
+  targetUserId: target.userId,
+  type: target.type,
+  originalTicket: target.ticket || null,
+  annulTicket: target.annulTicket || null,
+  originalReason: target.reason || null,
+  annulReason: motivo,
+  authorizerId: aid,               // "Staff que autoriza"
+  deletedLogMessageId: target.logMessageId || null,
+  counts: { warns: postAfter.warns, strikes: postAfter.strikes, maxWarn: MAX_WARN, maxStrike: MAX_STRIKE },
+});
+
 
         saveDB(db);
         return interaction.reply({ ephemeral: true, content: '♻️ Sanción anulada correctamente.' });
