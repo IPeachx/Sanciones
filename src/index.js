@@ -18,7 +18,7 @@ import {
 } from 'discord.js';
 
 // ====== Rol único para TODO el panel (3 botones y comandos) ======
-const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← cambia aquí tu rol
+const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← cambia aquí tu rol si hace falta
 
 // ====== Comando por texto para enviar el panel ======
 const TEXT_COMMAND = '!panel-sancion';
@@ -36,8 +36,8 @@ const cfg = {
     footer: process.env.DM_FOOTER || 'Lollipop RP',
   },
   panelEmbed: {
-    title: process.env.PANEL_TITLE || 'Panel de sanciones',
-    color: process.env.PANEL_COLOR || '#FFC0CB', // rosita claro por defecto
+    title: process.env.PANEL_TITLE || 'Panel de sanciones • Lollipop',
+    color: process.env.PANEL_COLOR || '#FFC0CB', // rosita claro
     footer: process.env.PANEL_FOOTER || 'Solo Staff autorizado',
   },
   limits: {
@@ -142,7 +142,6 @@ function baseEmbed() {
   if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
   return e;
 }
-
 function panelComponents() {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('btn_sancionar').setLabel('Sancionar').setStyle(ButtonStyle.Danger),
@@ -151,12 +150,10 @@ function panelComponents() {
   );
   return [row];
 }
-
-// Panel estilo “Lollipop”
 function panelInfoEmbed() {
   const e = new EmbedBuilder()
-    .setTitle('Panel de sanciones • Lollipop')
-    .setColor(cfg.panelEmbed?.color || '#FFC0CB') // rosita claro
+    .setTitle(cfg.panelEmbed?.title || 'Panel de sanciones • Lollipop')
+    .setColor(cfg.panelEmbed?.color || '#FFC0CB')
     .setDescription(
       [
         '### Botones',
@@ -171,11 +168,9 @@ function panelInfoEmbed() {
       ].join('\n')
     )
     .setTimestamp(new Date());
-
-  if (cfg.dmEmbed?.logoUrl)  e.setThumbnail(cfg.dmEmbed.logoUrl);
+  if (cfg.dmEmbed?.logoUrl) e.setThumbnail(cfg.dmEmbed.logoUrl);
   if (cfg.dmEmbed?.imageUrl) e.setImage(cfg.dmEmbed.imageUrl);
-  if (cfg.dmEmbed?.footer)   e.setFooter({ text: cfg.dmEmbed.footer });
-
+  if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
   return e;
 }
 
@@ -199,7 +194,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // Botones (los 3 usan EL MISMO permiso)
     if (interaction.isButton()) {
-      // SANCIONAR
+      // SANCIONAR (sin cambios)
       if (interaction.customId === 'btn_sancionar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -219,30 +214,47 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // ANULAR — orden: Usuario, Tipo, Motivo, Staff que autoriza, Ticket
+      // ANULAR — **CAMBIO PEDIDO**: por TIPO (sin ticket)
       if (interaction.customId === 'btn_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
         const modal = new ModalBuilder().setCustomId('modal_anular').setTitle('Anular sanción');
 
-        const tiUser = new TextInputBuilder().setCustomId('usuario').setLabel('Usuario (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
-        const tiType = new TextInputBuilder().setCustomId('tipo').setLabel('Tipo de sanción (warn o strike)').setStyle(TextInputStyle.Short).setRequired(true);
-        const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo de anulación').setStyle(TextInputStyle.Paragraph).setRequired(true);
-        const tiAuth = new TextInputBuilder().setCustomId('autor').setLabel('Staff que autoriza (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
-        const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Ticket').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiUser = new TextInputBuilder()
+          .setCustomId('usuario')
+          .setLabel('Usuario (mención o ID)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const tiType = new TextInputBuilder()
+          .setCustomId('tipo')
+          .setLabel('Tipo de sanción a anular (warn o strike)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const tiReason = new TextInputBuilder()
+          .setCustomId('motivo')
+          .setLabel('Motivo de anulación')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const tiAuth = new TextInputBuilder()
+          .setCustomId('autor')
+          .setLabel('Staff que autoriza (mención o ID)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
 
         modal.addComponents(
           new ActionRowBuilder().addComponents(tiUser),
           new ActionRowBuilder().addComponents(tiType),
           new ActionRowBuilder().addComponents(tiReason),
           new ActionRowBuilder().addComponents(tiAuth),
-          new ActionRowBuilder().addComponents(tiTicket),
         );
 
         return interaction.showModal(modal);
       }
 
-      // BUSCAR
+      // BUSCAR (sin cambios)
       if (interaction.customId === 'btn_buscar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -254,7 +266,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // Modals submit
+    // ====== Modals submit ======
     if (interaction.isModalSubmit()) {
       const db = loadDB();
       if (!interaction.inGuild()) {
@@ -262,7 +274,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       const gid = interaction.guildId;
 
-      // ====== APLICAR SANCIÓN ======
+      // ====== APLICAR SANCIÓN (sin cambios) ======
       if (interaction.customId === 'modal_sancionar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -290,7 +302,7 @@ client.on('interactionCreate', async (interaction) => {
           ticket,
           active: true,
           createdAt: Date.now(),
-          logMessageId: null, // ← guardaremos el mensaje del canal de sanciones
+          logMessageId: null,
         };
         db.guilds[gid].sanctions.push(record);
 
@@ -309,7 +321,7 @@ client.on('interactionCreate', async (interaction) => {
           });
         }
 
-        // LOG a canal específico de sanciones
+        // LOG a canal específico de sanciones + guardar msg.id
         try {
           const ch = getLogChannelForSanctions(interaction.guild);
           if (ch) {
@@ -325,7 +337,6 @@ client.on('interactionCreate', async (interaction) => {
 
             const msg = await ch.send({ embeds: [e] }).catch(() => null);
             if (msg?.id) {
-              // guarda el ID del mensaje de log en el registro recién creado
               const list = db.guilds[gid].sanctions;
               list[list.length - 1].logMessageId = msg.id;
             }
@@ -357,7 +368,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // ====== ANULAR SANCIÓN (con TIPO) ======
+      // ====== ANULAR SANCIÓN — **CAMBIO PEDIDO**: por TIPO (sin ticket) ======
       if (interaction.customId === 'modal_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -365,42 +376,35 @@ client.on('interactionCreate', async (interaction) => {
         const rawType  = interaction.fields.getTextInputValue('tipo')?.trim().toLowerCase();
         const motivo   = interaction.fields.getTextInputValue('motivo')?.trim();
         const autorRaw = interaction.fields.getTextInputValue('autor')?.trim();
-        const ticketRaw= interaction.fields.getTextInputValue('ticket')?.trim();
 
-        const uid   = parseUser(rawUser);
-        const aid   = parseUser(autorRaw);
-        const tipo  = rawType === 'warn' || rawType === 'strike' ? rawType : null;
-        const ticket= ticketRaw?.replace(/[^\d]/g, '');
+        const uid  = parseUser(rawUser);
+        const aid  = parseUser(autorRaw);
+        const tipo = rawType === 'warn' || rawType === 'strike' ? rawType : null;
 
-        if (!uid || !tipo || !ticket || !motivo || !aid) {
+        if (!uid || !tipo || !motivo || !aid) {
           return interaction.reply({
             ephemeral: true,
-            content: '⚠️ Datos inválidos. Revisa usuario/tipo (warn/strike)/ticket/motivo/autor.'
+            content: '⚠️ Datos inválidos. Revisa usuario/tipo (warn/strike)/motivo/autor.',
           });
         }
 
         ensureGuild(db, gid);
         const list = db.guilds[gid].sanctions || [];
 
-        // Buscar exactamente por usuario + tipo + ticket y que esté activa
-        let target = list.find(s => s.userId === uid && s.type === tipo && s.ticket == ticket && s.active);
+        // última sanción ACTIVA de ese tipo para ese usuario
+        const target = list
+          .filter(s => s.userId === uid && s.type === tipo && s.active)
+          .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+          .pop();
 
-        // Fallback: si no aparece, intenta solo por ticket+usuario para sugerir el tipo correcto
         if (!target) {
-          const candidate = list.find(s => s.userId === uid && s.ticket == ticket && s.active);
-          if (candidate) {
-            return interaction.reply({
-              ephemeral: true,
-              content: `⚠️ La sanción con ticket ${ticket} para ese usuario es de tipo **${candidate.type.toUpperCase()}**. Escribe ese tipo exactamente.`
-            });
-          }
           return interaction.reply({
             ephemeral: true,
-            content: '⚠️ No se encontró una sanción activa para ese usuario, tipo y ticket.'
+            content: '⚠️ No se encontró una sanción activa de ese TIPO para ese usuario.',
           });
         }
 
-        // Marcar anulación
+        // marcar anulación
         target.active = false;
         target.annulReason = motivo;
         target.annulAuthorId = aid;
@@ -423,8 +427,8 @@ client.on('interactionCreate', async (interaction) => {
               .setTitle('♻️ Sanción anulada')
               .setFields(
                 { name: 'Usuario', value: `<@${target.userId}> (\`${target.userId}\`)`, inline: true },
-                { name: 'Ticket', value: String(ticket), inline: true },
                 { name: 'Tipo', value: target.type.toUpperCase(), inline: true },
+                ...(target.ticket ? [{ name: 'Ticket', value: String(target.ticket), inline: true }] : []),
                 { name: 'Motivo original', value: target.reason || '—' },
                 { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)` },
                 { name: 'Motivo de anulación', value: motivo || '—' },
@@ -433,14 +437,14 @@ client.on('interactionCreate', async (interaction) => {
           }
         } catch {}
 
-        // 3) DM al usuario avisando la anulación (incluye tipo)
+        // 3) DM al usuario avisando la anulación
         try {
           const eDM = baseEmbed()
             .setTitle('Tu sanción ha sido anulada')
             .setDescription(
               [
                 `**Tipo:** ${target.type.toUpperCase()}`,
-                `**Ticket:** ${ticket}`,
+                ...(target.ticket ? [`**Ticket:** ${target.ticket}`] : []),
                 `**Motivo de anulación:** ${motivo}`,
                 `**Staff:** <@${aid}>`,
               ].join('\n')
@@ -453,7 +457,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ ephemeral: true, content: '♻️ Sanción anulada correctamente.' });
       }
 
-      // ====== BUSCAR ======
+      // ====== BUSCAR (sin cambios) ======
       if (interaction.customId === 'modal_buscar') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
@@ -488,7 +492,8 @@ client.on('interactionCreate', async (interaction) => {
           );
         return interaction.reply({ ephemeral: true, embeds: [e] });
       }
-      return;
+
+      return; // cierre de isModalSubmit
     }
   } catch (e) {
     console.error('Error en interacción:', e);
