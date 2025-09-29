@@ -14,33 +14,57 @@ import {
   PermissionsBitField,
   TextInputBuilder,
   TextInputStyle,
+  Events,
 } from 'discord.js';
-import cfg from '../config.json' assert { type: 'json' };
 
-// ====== Persistencia simple en JSON ======
-const DATA_PATH =
-  process.env.SANCTIONS_PATH ||
-  (fs.existsSync('/data') ? '/data/sanctions.json' : path.join(process.cwd(), 'sanctions.json'));
+// ====== Rol único para usar TODO el panel (3 botones y comandos) ======
+const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← pon aquí el rol que dará acceso
 
+// ====== Comando por texto para enviar el panel ======
+const TEXT_COMMAND = '!panel-sancion';
+
+// ====== Config desde .env (opcional) ======
+const cfg = {
+  guildId: process.env.GUILD_ID,
+  logChannelId: process.env.LOG_CHANNEL_ID,
+  logSanctionsChannelId: process.env.LOG_SANCTIONS_CHANNEL_ID,
+  logAnnulsChannelId: process.env.LOG_ANNULS_CHANNEL_ID,
+  dmEmbed: {
+    color: process.env.DM_COLOR || '#FFCC8B',
+    logoUrl: process.env.DM_LOGO_URL || '',
+    imageUrl: process.env.DM_IMAGE_URL || '',
+    footer: process.env.DM_FOOTER || 'Lollipop RP',
+  },
+  panelEmbed: {
+    title: process.env.PANEL_TITLE || 'Panel de sanciones',
+    color: process.env.PANEL_COLOR || '#FFCC8B',
+    footer: process.env.PANEL_FOOTER || 'Solo Staff autorizado',
+  },
+  limits: {
+    warns: parseInt(process.env.LIMIT_WARN ?? '3', 10),
+    strikes: parseInt(process.env.LIMIT_STRIKE ?? '7', 10),
+  },
+};
+
+const DATA_PATH = path.join(process.cwd(), 'data.json');
+
+// ====== Persistencia simple ======
 function loadDB() {
   try {
-    if (!fs.existsSync(DATA_PATH)) {
-      fs.writeFileSync(DATA_PATH, JSON.stringify({ guilds: {} }, null, 2));
-    }
+    if (!fs.existsSync(DATA_PATH)) return { guilds: {} };
     return JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
-  } catch {
+  } catch (e) {
+    console.error('Error cargando DB:', e);
     return { guilds: {} };
   }
 }
-
 function saveDB(db) {
   try {
-    fs.writeFileSync(DATA_PATH, JSON.stringify(db, null, 2));
+    fs.writeFileSync(DATA_PATH, JSON.stringify(db, null, 2), 'utf8');
   } catch (e) {
     console.error('Error guardando DB:', e);
   }
 }
-
 function ensureGuild(db, gid) {
   db.guilds ||= {};
   db.guilds[gid] ||= { sanctions: [] };
@@ -50,9 +74,10 @@ function ensureGuild(db, gid) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers,   // roles/miembros
+    GatewayIntentBits.GuildMessages,  // comandos por texto
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent, // contenido de mensajes
   ],
   partials: [Partials.Channel],
 });
@@ -69,34 +94,12 @@ function getLogChannelForAnnuls(guild) {
   const id = cfg.logAnnulsChannelId || cfg.logChannelId;
   return id ? guild.channels.cache.get(id) : null;
 }
-
-function hasAnyRole(member, roleIds = []) {
-  if (!roleIds?.length) return true;
-  return member.roles.cache.some(r => roleIds.includes(r.id));
-}
-
 function parseUser(input) {
   if (!input) return null;
-  // <@123> o <@!123> o simple ID
-  const m = input.match(/^<@!?(\d+)>$/);
-  return m ? m[1] : input.trim();
+  const m = input.match(/<@!?(\d+)>/) || input.match(/^(\d{10,20})$/);
+  return m ? m[1] : null;
 }
-
-async function resolveMember(guild, text) {
-  const id = parseUser(text);
-  if (!id) return null;
-  try {
-    return await guild.members.fetch(id);
-  } catch {
-    return null;
-  }
-}
-
-function nowISO() {
-  return new Date().toISOString();
-}
-
-function countActive(db, gid, uid) {
+function getCurrentCounts(db, gid, uid) {
   const list = (db.guilds[gid]?.sanctions || []).filter(s => s.active && s.userId === uid);
   return {
     warns: list.filter(s => s.type === 'warn').length,
@@ -104,7 +107,34 @@ function countActive(db, gid, uid) {
   };
 }
 
-// ====== Embeds ======
+// 🔐 Helper: valida el rol del panel (mismo para los 3 botones y modals)
+async function ensureHasPanelRole(interaction) {
+  if (!interaction.inGuild()) {
+    await interaction.reply({ ephemeral: true, content: 'Este panel solo funciona en servidores.' });
+    return false;
+  }
+  const role = interaction.guild.roles.cache.get(ROLE_ALLOWED_PANEL);
+  if (!role) {
+    await interaction.reply({
+      ephemeral: true,
+      content: '⚠️ Config: el rol configurado para el panel no existe en este servidor.',
+    });
+    return false;
+  }
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    await interaction.reply({ ephemeral: true, content: 'No pude verificar tus permisos (miembro no encontrado).' });
+    return false;
+  }
+  const ok = member.roles.cache.has(ROLE_ALLOWED_PANEL);
+  if (!ok) {
+    await interaction.reply({ ephemeral: true, content: '⛔ No tienes permisos para usar este panel.' });
+    return false;
+  }
+  return true;
+}
+
+// ====== Embeds/UI ======
 function baseEmbed() {
   const e = new EmbedBuilder().setColor(cfg.dmEmbed?.color || '#FFCC8B').setTimestamp(new Date());
   if (cfg.dmEmbed?.logoUrl) e.setThumbnail(cfg.dmEmbed.logoUrl);
@@ -112,154 +142,6 @@ function baseEmbed() {
   if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
   return e;
 }
-
-function dmSanctionEmbed({ type, guildName, reason, authorizedBy, progress, ticket }) {
-  const title =
-    type === 'warn'
-      ? cfg.dmEmbed?.titleWarn || 'Has recibido un WARN'
-      : cfg.dmEmbed?.titleStrike || 'Has recibido un STRIKE';
-  const e = baseEmbed()
-    .setTitle(`📩 ${title}`)
-    .setDescription(`En **${guildName}**`)
-    .addFields(
-      { name: 'Motivo', value: reason || '—', inline: false },
-      { name: 'Autorizado por', value: authorizedBy || '—', inline: true }
-    );
-  if (progress) e.addFields({ name: 'Progreso', value: progress, inline: false });
-  if (ticket) e.addFields({ name: 'Ticket', value: String(ticket), inline: true });
-  return e;
-}
-
-function dmAnnulEmbed({ guildName, type, reason, authorizedBy, ticket }) {
-  const e = baseEmbed()
-    .setTitle(`🟢 ${cfg.dmEmbed?.titleAnnul || 'Sanción anulada'}`)
-    .setDescription(`Tu sanción **${String(type).toUpperCase()}** en **${guildName}** fue **anulada**.`)
-    .addFields(
-      { name: 'Motivo de anulación', value: reason || '—', inline: false },
-      { name: 'Autorizado por', value: authorizedBy || '—', inline: true }
-    );
-  if (ticket) e.addFields({ name: 'Ticket', value: String(ticket), inline: true });
-  return e;
-}
-
-function logEmbed({
-  title,
-  actor,
-  target,
-  type,
-  reason,
-  authorizedBy,
-  sanctionId,
-  extra = [],
-}) {
-  const e = new EmbedBuilder()
-    .setColor(cfg.embedColor || '#FFCC8B')
-    .setTitle(title || 'Sanción')
-    .setTimestamp(new Date());
-
-  if (cfg.dmEmbed?.logoUrl) e.setThumbnail(cfg.dmEmbed.logoUrl);
-  if (cfg.dmEmbed?.imageUrl) e.setImage(cfg.dmEmbed.imageUrl);
-  if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
-
-  if (target) e.addFields({ name: 'Usuario', value: `<@${target.id}> (${target.tag})`, inline: false });
-  if (type) e.addFields({ name: 'Tipo', value: String(type).toUpperCase(), inline: true });
-  if (reason) e.addFields({ name: 'Motivo', value: reason, inline: true });
-  if (authorizedBy) e.addFields({ name: 'Autorizado por', value: authorizedBy, inline: true });
-  if (actor) e.addFields({ name: 'Sancionado por', value: `<@${actor.id}> (${actor.tag})`, inline: false });
-  if (sanctionId) e.addFields({ name: 'ID de Sanción', value: String(sanctionId), inline: false });
-
-  for (const f of extra) e.addFields(f);
-  return e;
-}
-
-// ====== DM con fallback a log cuando falla ======
-async function sendDmAndLog(guild, user, embed, contextTitle, extraLog = {}, logTo = 'sanctions') {
-  let delivered = true;
-  try {
-    const dm = await user.createDM();
-    await dm.send({ embeds: [embed] });
-  } catch {
-    delivered = false;
-    const logCh =
-      logTo === 'annuls' ? getLogChannelForAnnuls(guild) : getLogChannelForSanctions(guild);
-    if (logCh) {
-      const e = new EmbedBuilder()
-        .setColor('#E67E22')
-        .setTitle('✉️ No se pudo enviar DM')
-        .setDescription(`No se pudo notificar por DM — ${contextTitle}`)
-        .setTimestamp(new Date())
-        .addFields({ name: 'Usuario', value: `<@${user.id}> (${user.tag})` });
-      if (extraLog?.sanctionId) e.addFields({ name: 'ID', value: String(extraLog.sanctionId) });
-      await logCh.send({ embeds: [e] }).catch(() => {});
-    }
-  }
-  return delivered;
-}
-
-// ====== STRIKE automático al llegar a 3/3, 6/3, ... ======
-async function maybeAddAutoStrike({ db, guild, targetMember, authorizedMember, interaction, ticket }) {
-  const gid = guild.id;
-  const uid = targetMember.id;
-
-  const { warns } = countActive(db, gid, uid);
-  if (warns > 0 && warns % MAX_WARN === 0) {
-    const strikeId = `${Date.now()}_${Math.floor(Math.random() * 9999)}`;
-    const reason = `Auto-STRIKE por acumular ${MAX_WARN} WARN(s) (los WARN no se consumen).`;
-
-    const strikeRecord = {
-      id: strikeId,
-      userId: uid,
-      userTag: targetMember.user.tag,
-      type: 'strike',
-      reason,
-      authorizedById: authorizedMember?.id ?? interaction.user.id,
-      authorizedByTag: authorizedMember?.user?.tag ?? interaction.user.tag,
-      issuedById: interaction.user.id,
-      issuedByTag: interaction.user.tag,
-      ticket: ticket || 'AUTO',
-      autoNoConsume: true,
-      createdAt: nowISO(),
-      active: true,
-    };
-
-    db.guilds[gid].sanctions.push(strikeRecord);
-    saveDB(db);
-
-    const after = countActive(db, gid, uid);
-
-    // DM
-    const dm = dmSanctionEmbed({
-      type: 'strike',
-      guildName: guild.name,
-      reason,
-      authorizedBy: strikeRecord.authorizedByTag,
-      ticket: strikeRecord.ticket,
-      progress: `Warns ${after.warns}/${MAX_WARN} · Strikes ${after.strikes}/${MAX_STRIKE}`,
-    });
-    await sendDmAndLog(guild, targetMember.user, dm, 'Auto-STRIKE por WARNs', { sanctionId: strikeId });
-
-    // Log a sanciones
-    const logCh = getLogChannelForSanctions(guild);
-    if (logCh) {
-      const e = logEmbed({
-        title: '⚠️ Auto STRIKE por WARNs',
-        actor: interaction.user,
-        target: targetMember.user,
-        type: 'strike',
-        reason,
-        authorizedBy: strikeRecord.authorizedByTag,
-        sanctionId: strikeId,
-        extra: [
-          { name: 'Acumulado', value: `Warns ${after.warns}/${MAX_WARN} · Strikes ${after.strikes}/${MAX_STRIKE}` },
-          { name: 'Ticket', value: String(strikeRecord.ticket) },
-        ],
-      });
-      await logCh.send({ embeds: [e] }).catch(() => {});
-    }
-  }
-}
-
-// ====== UI ======
 function panelComponents() {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('btn_sancionar').setLabel('Sancionar').setStyle(ButtonStyle.Danger),
@@ -268,7 +150,6 @@ function panelComponents() {
   );
   return [row];
 }
-
 function panelInfoEmbed() {
   const e = new EmbedBuilder()
     .setTitle(cfg.panelEmbed?.title || 'Panel de sanciones')
@@ -276,370 +157,276 @@ function panelInfoEmbed() {
     .setDescription(
       [
         '### Botones',
-        '• **Sancionar** → Abre formulario para aplicar `WARN` o `STRIKE`.',
-        '• **Anular sanción** → Abre formulario para anular una sanción con ticket.',
-        '• **Buscar** → Consulta sanciones activas de un usuario.',
+        '• **Sancionar** → Aplica `WARN` o `STRIKE`.',
+        '• **Anular sanción** → Anula por ticket.',
+        '• **Buscar** → Consulta sanciones por UserID.',
         '',
-        '### Consejitos',
-        '• Antes de usar un botón, obtiene el **ID** del usuario y de quien **autoriza**.',
-        '• Escribe correctamente el **motivo**, evita mayúsculas sostenidas.',
-        '• Asegúrate de sancionar al **usuario correcto**.',
+        `**Límites**: WARN máx. ${MAX_WARN} (al llegar, suma 1 STRIKE sin consumir warns) • STRIKE máx. ${MAX_STRIKE}.`,
       ].join('\n')
-    )
-    .setTimestamp(new Date());
-  if (cfg.panelEmbed?.logoUrl) e.setThumbnail(cfg.panelEmbed.logoUrl);
-  if (cfg.panelEmbed?.imageUrl) e.setImage(cfg.panelEmbed.imageUrl);
+    );
   if (cfg.panelEmbed?.footer) e.setFooter({ text: cfg.panelEmbed.footer });
   return e;
 }
 
 // ====== Ready ======
-client.once('ready', () => {
+client.once(Events.ClientReady, () => {
   console.log(`✅ Conectado como ${client.user.tag}`);
 });
 
 // ====== Interacciones ======
 client.on('interactionCreate', async (interaction) => {
   try {
-    // /panel-sanciones
+    // Slash opcional: /panel-sanciones
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'panel-sanciones') {
-        await interaction.reply({ embeds: [panelInfoEmbed()], components: panelComponents() });
+        if (!(await ensureHasPanelRole(interaction))) return;
+        await interaction.channel.send({ embeds: [panelInfoEmbed()], components: panelComponents() });
+        return interaction.reply({ ephemeral: true, content: '✅ Panel enviado.' });
       }
       return;
     }
 
-    // Botones
+    // Botones (los 3 usan EL MISMO permiso)
     if (interaction.isButton()) {
-      const { guild, member } = interaction;
-
+      // SANCIONAR
       if (interaction.customId === 'btn_sancionar') {
-        if (!hasAnyRole(member, cfg.sanctionRoles))
-          return interaction.reply({ ephemeral: true, content: '⛔ No tienes permisos para sancionar.' });
+        if (!(await ensureHasPanelRole(interaction))) return;
 
-        const modal = new ModalBuilder().setCustomId('modal_sancionar').setTitle('Sancionar usuario');
-
-        const tiUser = new TextInputBuilder()
-          .setCustomId('usuario')
-          .setLabel('Usuario a sancionar (mención o ID)')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Short);
-
-        const tiType = new TextInputBuilder()
-          .setCustomId('tipo')
-          .setLabel('Tipo (warn o strike)')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Short);
-
-        const tiMotivo = new TextInputBuilder()
-          .setCustomId('motivo')
-          .setLabel('Motivo de sanción')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Paragraph);
-
-        const tiAuth = new TextInputBuilder()
-          .setCustomId('autoriza')
-          .setLabel('Autorizado por (mención o ID)')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Short);
-
-        const tiTicket = new TextInputBuilder()
-          .setCustomId('ticket')
-          .setLabel('Número de Ticket (opcional)')
-          .setRequired(false)
-          .setStyle(TextInputStyle.Short);
-
+        const modal = new ModalBuilder().setCustomId('modal_sancionar').setTitle('Aplicar sanción');
+        const tiUser   = new TextInputBuilder().setCustomId('usuario').setLabel('Usuario (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiType   = new TextInputBuilder().setCustomId('tipo').setLabel('Tipo (warn o strike)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo').setStyle(TextInputStyle.Paragraph).setRequired(true);
+        const tiAuth   = new TextInputBuilder().setCustomId('autor').setLabel('Staff que sanciona (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Número de ticket').setStyle(TextInputStyle.Short).setRequired(true);
         modal.addComponents(
           new ActionRowBuilder().addComponents(tiUser),
           new ActionRowBuilder().addComponents(tiType),
-          new ActionRowBuilder().addComponents(tiMotivo),
+          new ActionRowBuilder().addComponents(tiReason),
           new ActionRowBuilder().addComponents(tiAuth),
-          new ActionRowBuilder().addComponents(tiTicket)
+          new ActionRowBuilder().addComponents(tiTicket),
         );
         return interaction.showModal(modal);
       }
 
+      // ANULAR
       if (interaction.customId === 'btn_anular') {
-        if (!hasAnyRole(member, cfg.sanctionRoles))
-          return interaction.reply({ ephemeral: true, content: '⛔ No tienes permisos para anular.' });
+        if (!(await ensureHasPanelRole(interaction))) return;
 
         const modal = new ModalBuilder().setCustomId('modal_anular').setTitle('Anular sanción');
-
-        const tiUser = new TextInputBuilder()
-          .setCustomId('usuario')
-          .setLabel('Usuario (mención o ID)')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Short);
-
-        const tiType = new TextInputBuilder()
-          .setCustomId('tipo')
-          .setLabel('Tipo a anular (warn o strike)')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Short);
-
-        const tiMotivo = new TextInputBuilder()
-          .setCustomId('motivo')
-          .setLabel('Motivo de anulación')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Paragraph);
-
-        const tiAuth = new TextInputBuilder()
-          .setCustomId('autoriza')
-          .setLabel('Autorizado por (mención o ID)')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Short);
-
-        const tiTicket = new TextInputBuilder()
-          .setCustomId('ticket')
-          .setLabel('Número de Ticket (opcional)')
-          .setRequired(false)
-          .setStyle(TextInputStyle.Short);
-
+        const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Número de ticket a anular').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo de anulación').setStyle(TextInputStyle.Paragraph).setRequired(true);
+        const tiAuth   = new TextInputBuilder().setCustomId('autor').setLabel('Staff que anula (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
         modal.addComponents(
-          new ActionRowBuilder().addComponents(tiUser),
-          new ActionRowBuilder().addComponents(tiType),
-          new ActionRowBuilder().addComponents(tiMotivo),
+          new ActionRowBuilder().addComponents(tiTicket),
+          new ActionRowBuilder().addComponents(tiReason),
           new ActionRowBuilder().addComponents(tiAuth),
-          new ActionRowBuilder().addComponents(tiTicket)
         );
         return interaction.showModal(modal);
       }
 
+      // BUSCAR
       if (interaction.customId === 'btn_buscar') {
-        if (!hasAnyRole(interaction.member, cfg.listRoles))
-          return interaction.reply({ ephemeral: true, content: '⛔ No tienes permisos para buscar.' });
+        if (!(await ensureHasPanelRole(interaction))) return;
 
         const modal = new ModalBuilder().setCustomId('modal_buscar').setTitle('Buscar sanciones');
-
-        const tiUser = new TextInputBuilder()
-          .setCustomId('usuario')
-          .setLabel('Usuario (mención o ID)')
-          .setRequired(true)
-          .setStyle(TextInputStyle.Short);
-
+        const tiUser = new TextInputBuilder().setCustomId('usuario').setLabel('Usuario (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
         modal.addComponents(new ActionRowBuilder().addComponents(tiUser));
         return interaction.showModal(modal);
       }
       return;
     }
 
-    // Modales
+    // Modals submit (re-validamos el mismo rol)
     if (interaction.isModalSubmit()) {
-      const { guild } = interaction;
       const db = loadDB();
-      ensureGuild(db, guild.id);
+      if (!interaction.inGuild()) {
+        return interaction.reply({ ephemeral: true, content: 'Solo en servidores.' });
+      }
+      const gid = interaction.guildId;
 
-      // ===== SANCIONAR =====
+      // Aplicar sanción
       if (interaction.customId === 'modal_sancionar') {
-        await interaction.deferReply({ ephemeral: true });
+        if (!(await ensureHasPanelRole(interaction))) return;
 
-        const userText = interaction.fields.getTextInputValue('usuario');
-        const typeText = interaction.fields.getTextInputValue('tipo');
-        const reason = interaction.fields.getTextInputValue('motivo');
-        const authText = interaction.fields.getTextInputValue('autoriza');
-        const ticket = interaction.fields.getTextInputValue('ticket')?.trim();
+        const rawUser = interaction.fields.getTextInputValue('usuario')?.trim();
+        const tipo    = interaction.fields.getTextInputValue('tipo')?.trim().toLowerCase();
+        const motivo  = interaction.fields.getTextInputValue('motivo')?.trim();
+        const autorRaw= interaction.fields.getTextInputValue('autor')?.trim();
+        const ticketRaw=interaction.fields.getTextInputValue('ticket')?.trim();
 
-        const targetMember = await resolveMember(guild, userText);
-        const authorizedMember = await resolveMember(guild, authText);
-        const type = String(typeText || '').toLowerCase().trim();
+        const uid = parseUser(rawUser);
+        const aid = parseUser(autorRaw);
+        const ticket = ticketRaw?.replace(/[^\d]/g, '');
 
-        if (!targetMember)
-          return interaction.editReply('❌ Usuario a sancionar inválido.');
-        if (!authorizedMember)
-          return interaction.editReply('❌ Usuario que autoriza inválido.');
-        if (!['warn', 'strike'].includes(type))
-          return interaction.editReply('❌ Tipo inválido. Usa `warn` o `strike`.');
-
-        const sanctionId = `${Date.now()}_${Math.floor(Math.random() * 9999)}`;
-        const record = {
-          id: sanctionId,
-          userId: targetMember.id,
-          userTag: targetMember.user.tag,
-          type,
-          reason,
-          authorizedById: authorizedMember.id,
-          authorizedByTag: authorizedMember.user.tag,
-          issuedById: interaction.user.id,
-          issuedByTag: interaction.user.tag,
-          ticket: ticket || undefined,
-          createdAt: nowISO(),
-          active: true,
-        };
-
-        db.guilds[guild.id].sanctions.push(record);
-        saveDB(db);
-
-        const c = countActive(db, guild.id, targetMember.id);
-
-        // DM
-        const dm = dmSanctionEmbed({
-          type,
-          guildName: guild.name,
-          reason,
-          authorizedBy: authorizedMember.user.tag,
-          ticket,
-          progress: `Warns ${c.warns}/${MAX_WARN} · Strikes ${c.strikes}/${MAX_STRIKE}`,
-        });
-        await sendDmAndLog(guild, targetMember.user, dm, 'Nueva sanción', { sanctionId });
-
-        // Log (nuevas sanciones)
-        const logCh = getLogChannelForSanctions(guild);
-        if (logCh) {
-          const e = logEmbed({
-            title: '📌 Nueva sanción',
-            actor: interaction.user,
-            target: targetMember.user,
-            type,
-            reason,
-            authorizedBy: authorizedMember.user.tag,
-            sanctionId,
-            extra: [
-              { name: 'Acumulado', value: `Warns ${c.warns}/${MAX_WARN} · Strikes ${c.strikes}/${MAX_STRIKE}` },
-              ...(ticket ? [{ name: 'Ticket', value: String(ticket) }] : []),
-            ],
-          });
-          await logCh.send({ embeds: [e] }).catch(() => {});
+        if (!uid || !['warn', 'strike'].includes(tipo) || !motivo || !aid || !ticket) {
+          return interaction.reply({ ephemeral: true, content: '⚠️ Datos inválidos. Revisa usuario/tipo/motivo/autor/ticket.' });
         }
 
-        // Auto STRIKE si corresponde (al llegar a múltiplo exacto de MAX_WARN)
-        if (type === 'warn') {
-          await maybeAddAutoStrike({
-            db,
-            guild,
-            targetMember,
-            authorizedMember,
-            interaction,
+        ensureGuild(db, gid);
+        const record = { type: tipo, userId: uid, reason: motivo, authorId: aid, ticket, active: true, createdAt: Date.now() };
+        db.guilds[gid].sanctions.push(record);
+
+        // Auto STRIKE al llegar a MAX_WARN (sin consumir warns)
+        const counts = getCurrentCounts(db, gid, uid);
+        if (tipo === 'warn' && counts.warns >= MAX_WARN) {
+          db.guilds[gid].sanctions.push({
+            type: 'strike',
+            userId: uid,
+            reason: `Acumulación de ${MAX_WARN} warns`,
+            authorId: aid,
             ticket,
+            active: true,
+            createdAt: Date.now(),
           });
         }
-
-        return interaction.editReply('✅ Sanción registrada.');
-      }
-
-      // ===== ANULAR =====
-      if (interaction.customId === 'modal_anular') {
-        await interaction.deferReply({ ephemeral: true });
-
-        const userText = interaction.fields.getTextInputValue('usuario');
-        const typeText = interaction.fields.getTextInputValue('tipo');
-        const annulReason = interaction.fields.getTextInputValue('motivo');
-        const authText = interaction.fields.getTextInputValue('autoriza');
-        const ticket = interaction.fields.getTextInputValue('ticket')?.trim();
-
-        const targetMember = await resolveMember(guild, userText);
-        const authorizedMember = await resolveMember(guild, authText);
-        const type = String(typeText || '').toLowerCase().trim();
-
-        if (!targetMember)
-          return interaction.editReply('❌ Usuario inválido.');
-        if (!authorizedMember)
-          return interaction.editReply('❌ Usuario que autoriza inválido.');
-        if (!['warn', 'strike'].includes(type))
-          return interaction.editReply('❌ Tipo inválido. Usa `warn` o `strike`.');
-
-        const list = db.guilds[guild.id].sanctions;
-        // Buscamos la sanción activa más reciente de ese tipo
-        const idx = [...list]
-          .reverse()
-          .findIndex(s => s.active && s.userId === targetMember.id && s.type === type);
-
-        if (idx === -1)
-          return interaction.editReply('⚠️ No hay sanciones activas de ese tipo para ese usuario.');
-
-        const realIndex = list.length - 1 - idx;
-        const sanction = list[realIndex];
-
-        sanction.active = false;
-        sanction.annulledAt = nowISO();
-        sanction.annulledById = interaction.user.id;
-        sanction.annulledByTag = interaction.user.tag;
-        sanction.annulReason = annulReason || '—';
-        if (ticket) sanction.annulTicket = ticket;
 
         saveDB(db);
 
-        const c = countActive(db, guild.id, targetMember.id);
+        // Logs
+        try {
+          const ch = getLogChannelForSanctions(interaction.guild);
+          if (ch) {
+            const e = baseEmbed()
+              .setTitle('✅ Sanción aplicada')
+              .setFields(
+                { name: 'Usuario', value: `<@${uid}> (\`${uid}\`)`, inline: true },
+                { name: 'Tipo', value: record.type.toUpperCase(), inline: true },
+                { name: 'Motivo', value: record.reason || '—' },
+                { name: 'Autor', value: `<@${aid}> (\`${aid}\`)`, inline: true },
+                { name: 'Ticket', value: String(record.ticket), inline: true },
+              );
+            await ch.send({ embeds: [e] }).catch(() => {});
+          }
+        } catch {}
 
-        // DM
-        const dm = dmAnnulEmbed({
-          guildName: guild.name,
-          type,
-          reason: annulReason,
-          authorizedBy: authorizedMember.user.tag,
-          ticket,
+        const post = getCurrentCounts(db, gid, uid);
+        return interaction.reply({
+          ephemeral: true,
+          content: `✅ Sanción registrada.\nWarns: ${post.warns}/${MAX_WARN} • Strikes: ${post.strikes}/${MAX_STRIKE}`,
         });
-        await sendDmAndLog(guild, targetMember.user, dm, 'Sanción anulada', { sanctionId: sanction.id }, 'annuls');
+      }
 
-        // Log a canal de anulaciones
-        const logCh = getLogChannelForAnnuls(guild);
-        if (logCh) {
-          const e = logEmbed({
-            title: '🟢 Sanción anulada',
-            actor: interaction.user,
-            target: targetMember.user,
-            type,
-            reason: annulReason,
-            authorizedBy: authorizedMember.user.tag,
-            sanctionId: sanction.id,
-            extra: [
-              { name: 'Acumulado', value: `Warns ${c.warns}/${MAX_WARN} · Strikes ${c.strikes}/${MAX_STRIKE}` },
-              ...(ticket ? [{ name: 'Ticket', value: String(ticket) }] : []),
-            ],
-          });
-          await logCh.send({ embeds: [e] }).catch(() => {});
+      // Anular sanción
+      if (interaction.customId === 'modal_anular') {
+        if (!(await ensureHasPanelRole(interaction))) return;
+
+        const ticketRaw = interaction.fields.getTextInputValue('ticket')?.trim();
+        const motivo    = interaction.fields.getTextInputValue('motivo')?.trim();
+        const autorRaw  = interaction.fields.getTextInputValue('autor')?.trim();
+
+        const ticket = ticketRaw?.replace(/[^\d]/g, '');
+        const aid    = parseUser(autorRaw);
+
+        if (!ticket || !motivo || !aid) {
+          return interaction.reply({ ephemeral: true, content: '⚠️ Datos inválidos. Revisa ticket/motivo/autor.' });
         }
 
-        return interaction.editReply('✅ Sanción anulada.');
+        ensureGuild(db, gid);
+        const list = db.guilds[gid].sanctions || [];
+        const target = list.find(s => s.ticket == ticket && s.active);
+        if (!target) {
+          return interaction.reply({ ephemeral: true, content: '⚠️ No se encontró una sanción activa con ese ticket.' });
+        }
+        target.active = false;
+        target.annulReason = motivo;
+        target.annulAuthorId = aid;
+        target.annulAt = Date.now();
+
+        saveDB(db);
+
+        try {
+          const ch = getLogChannelForAnnuls(interaction.guild);
+          if (ch) {
+            const e = baseEmbed()
+              .setTitle('♻️ Sanción anulada')
+              .setFields(
+                { name: 'Usuario', value: `<@${target.userId}> (\`${target.userId}\`)`, inline: true },
+                { name: 'Tipo', value: target.type.toUpperCase(), inline: true },
+                { name: 'Motivo', value: target.reason || '—' },
+                { name: 'Ticket', value: String(ticket), inline: true },
+                { name: 'Anulación por', value: `<@${aid}> (\`${aid}\`)` },
+                { name: 'Motivo de anulación', value: motivo || '—' },
+              );
+            await ch.send({ embeds: [e] }).catch(() => {});
+          }
+        } catch {}
+
+        return interaction.reply({ ephemeral: true, content: '♻️ Sanción anulada correctamente.' });
       }
 
-      // ===== BUSCAR =====
+      // Buscar (submit)
       if (interaction.customId === 'modal_buscar') {
-        await interaction.deferReply({ ephemeral: true });
-        const userText = interaction.fields.getTextInputValue('usuario');
-        const member = await resolveMember(guild, userText);
-        if (!member) return interaction.editReply('❌ Usuario inválido.');
+        if (!(await ensureHasPanelRole(interaction))) return;
 
-        const db2 = loadDB();
-        const active = (db2.guilds[guild.id]?.sanctions || []).filter(
-          s => s.active && s.userId === member.id
-        );
+        const rawUser = interaction.fields.getTextInputValue('usuario')?.trim();
+        const uid = parseUser(rawUser);
+        if (!uid) {
+          return interaction.reply({ ephemeral: true, content: '⚠️ Usuario inválido.' });
+        }
 
-        const c = countActive(db2, guild.id, member.id);
-        const lines = active
-          .slice(-10)
-          .map(
-            s =>
-              `• **${s.type.toUpperCase()}** | Motivo: ${s.reason} | Autoriza: ${s.authorizedByTag} | ID: \`${s.id}\` ${
-                s.ticket ? `| Ticket: \`${s.ticket}\`` : ''
-              }`
+        ensureGuild(db, gid);
+        const list = (db.guilds[gid].sanctions || []).filter(s => s.userId === uid);
+        if (!list.length) {
+          return interaction.reply({ ephemeral: true, content: '🔎 Sin resultados.' });
+        }
+
+        const activeWarns = list.filter(s => s.active && s.type === 'warn').length;
+        const activeStrikes = list.filter(s => s.active && s.type === 'strike').length;
+
+        const e = baseEmbed()
+          .setTitle('🔎 Resultado de búsqueda')
+          .setDescription(`Usuario: <@${uid}> (\`${uid}\`)`)
+          .addFields(
+            { name: 'Warns activos', value: `${activeWarns}/${MAX_WARN}`, inline: true },
+            { name: 'Strikes activos', value: `${activeStrikes}/${MAX_STRIKE}`, inline: true },
+            {
+              name: 'Historial',
+              value: list.slice(-10).map(s =>
+                `• **${s.type.toUpperCase()}** — Ticket \`${s.ticket}\` — ${s.active ? 'Activo' : 'Anulado'}`
+              ).join('\n') || '—'
+            }
           );
-
-        const e = new EmbedBuilder()
-          .setColor(cfg.embedColor || '#FFCC8B')
-          .setTitle(`🔎 Sanciones activas de ${member.user.tag}`)
-          .setDescription(
-            lines.length ? lines.join('\n') : '_Sin sanciones activas_'
-          )
-          .addFields({
-            name: 'Acumulado',
-            value: `Warns ${c.warns}/${MAX_WARN} · Strikes ${c.strikes}/${MAX_STRIKE}`,
-          })
-          .setTimestamp(new Date());
-
-        return interaction.editReply({ embeds: [e] });
+        return interaction.reply({ ephemeral: true, embeds: [e] });
       }
-
       return;
     }
   } catch (e) {
     console.error('Error en interacción:', e);
     if (interaction.isRepliable()) {
-      try {
-        await interaction.reply({ ephemeral: true, content: '⚠️ Ocurrió un error.' });
-      } catch {}
+      try { await interaction.reply({ ephemeral: true, content: '⚠️ Ocurrió un error.' }); } catch {}
     }
   }
 });
 
+// ====== Comando por texto: !panel-sancion (mismo rol) ======
+client.on('messageCreate', async (message) => {
+  try {
+    if (!message.guild || message.author.bot) return;
+
+    const msg = message.content.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (msg !== TEXT_COMMAND) return;
+
+    const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+    if (!member) return;
+
+    if (!member.roles.cache.has(ROLE_ALLOWED_PANEL)) {
+      return message.reply('⛔ No tienes permisos para enviar el panel.');
+    }
+    if (!message.channel.isTextBased()) {
+      return message.reply('⚠️ Este canal no permite enviar el panel.');
+    }
+
+    await message.channel.send({ embeds: [panelInfoEmbed()], components: panelComponents() });
+    return message.reply('✅ Panel enviado.');
+  } catch (e) {
+    console.error('Error en !panel-sancion:', e);
+    try { await message.reply('⚠️ Ocurrió un error al enviar el panel.'); } catch {}
+  }
+});
+
 // ====== Login ======
+if (!process.env.TOKEN) {
+  console.error('❌ Falta TOKEN en el .env');
+  process.exit(1);
+}
 client.login(process.env.TOKEN);
