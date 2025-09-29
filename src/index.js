@@ -150,23 +150,35 @@ function panelComponents() {
   );
   return [row];
 }
+// ====== UI: Panel con copy "Lollipop" (estilo anterior) ======
 function panelInfoEmbed() {
   const e = new EmbedBuilder()
-    .setTitle(cfg.panelEmbed?.title || 'Panel de sanciones')
+    .setTitle('Panel de sanciones • Lollipop')
     .setColor(cfg.panelEmbed?.color || '#FFCC8B')
     .setDescription(
       [
         '### Botones',
-        '• **Sancionar** → Aplica `WARN` o `STRIKE`.',
-        '• **Anular sanción** → Anula por ticket.',
-        '• **Buscar** → Consulta sanciones por UserID.',
+        '• **Sancionar** → Abre formulario para aplicar `WARN` o `STRIKE`.',
+        '• **Anular sanción** → Abre formulario para anular la sanción de un usuario.',
+        '• **Buscar** → Consulta sanciones activas de un usuario.',
         '',
-        `**Límites**: WARN máx. ${MAX_WARN} (al llegar, suma 1 STRIKE sin consumir warns) • STRIKE máx. ${MAX_STRIKE}.`,
+        '### Consejitos',
+        '• Antes de usar un botón, saca el **userID** del usuario y de quien autoriza.',
+        '• Escribe correctamente el **motivo** de la sanción (evita mayúsculas sostenidas).',
+        '• Asegúrate de sancionar al usuario correcto.',
       ].join('\n')
     );
-  if (cfg.panelEmbed?.footer) e.setFooter({ text: cfg.panelEmbed.footer });
+    
+  if (cfg.dmEmbed?.logoUrl) e.setThumbnail(cfg.dmEmbed.logoUrl);
+  if (cfg.dmEmbed?.imageUrl) e.setImage(cfg.dmEmbed.imageUrl);
+  if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
+
+  // Marca de tiempo tipo “9/26/2025 5:15 PM”
+  e.setTimestamp(new Date());
+
   return e;
 }
+
 
 // ====== Ready ======
 client.once(Events.ClientReady, () => {
