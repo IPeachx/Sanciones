@@ -17,7 +17,7 @@ import {
   Events,
 } from 'discord.js';
 
-// ====== Rol único para usar TODO el panel (3 botones y comandos) ======
+// ====== Rol único para TODO el panel (3 botones y comandos) ======
 const ROLE_ALLOWED_PANEL = '1404587368262008862'.trim(); // ← pon aquí el rol que dará acceso
 
 // ====== Comando por texto para enviar el panel ======
@@ -142,6 +142,7 @@ function baseEmbed() {
   if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
   return e;
 }
+
 function panelComponents() {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('btn_sancionar').setLabel('Sancionar').setStyle(ButtonStyle.Danger),
@@ -150,11 +151,12 @@ function panelComponents() {
   );
   return [row];
 }
-// ====== UI: Panel con copy "Lollipop" (estilo anterior) ======
+
+// ====== UI: Panel "Lollipop" con rosita claro ======
 function panelInfoEmbed() {
   const e = new EmbedBuilder()
     .setTitle('Panel de sanciones • Lollipop')
-    .setColor(cfg.panelEmbed?.color || '#FFCC8B')
+    .setColor('#FFC0CB') // rosita claro
     .setDescription(
       [
         '### Botones',
@@ -167,18 +169,16 @@ function panelInfoEmbed() {
         '• Escribe correctamente el **motivo** de la sanción (evita mayúsculas sostenidas).',
         '• Asegúrate de sancionar al usuario correcto.',
       ].join('\n')
-    );
-    
-  if (cfg.dmEmbed?.logoUrl) e.setThumbnail(cfg.dmEmbed.logoUrl);
-  if (cfg.dmEmbed?.imageUrl) e.setImage(cfg.dmEmbed.imageUrl);
-  if (cfg.dmEmbed?.footer) e.setFooter({ text: cfg.dmEmbed.footer });
+    )
+    .setTimestamp(new Date());
 
-  // Marca de tiempo tipo “9/26/2025 5:15 PM”
-  e.setTimestamp(new Date());
+  // Logo y banner (si los definiste en Railway)
+  if (cfg.dmEmbed?.logoUrl)  e.setThumbnail(cfg.dmEmbed.logoUrl);
+  if (cfg.dmEmbed?.imageUrl) e.setImage(cfg.dmEmbed.imageUrl);
+  if (cfg.dmEmbed?.footer)   e.setFooter({ text: cfg.dmEmbed.footer });
 
   return e;
 }
-
 
 // ====== Ready ======
 client.once(Events.ClientReady, () => {
@@ -220,19 +220,43 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // ANULAR
+      // ANULAR — orden solicitado: Usuario, Motivo, Staff que autoriza, Ticket
       if (interaction.customId === 'btn_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
         const modal = new ModalBuilder().setCustomId('modal_anular').setTitle('Anular sanción');
-        const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Número de ticket a anular').setStyle(TextInputStyle.Short).setRequired(true);
-        const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo de anulación').setStyle(TextInputStyle.Paragraph).setRequired(true);
-        const tiAuth   = new TextInputBuilder().setCustomId('autor').setLabel('Staff que autoriza (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+
+        const tiUser = new TextInputBuilder()
+          .setCustomId('usuario')
+          .setLabel('Usuario (mención o ID)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const tiReason = new TextInputBuilder()
+          .setCustomId('motivo')
+          .setLabel('Motivo de anulación')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const tiAuth = new TextInputBuilder()
+          .setCustomId('autor')
+          .setLabel('Staff que autoriza (mención o ID)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const tiTicket = new TextInputBuilder()
+          .setCustomId('ticket')
+          .setLabel('Ticket')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
         modal.addComponents(
-          new ActionRowBuilder().addComponents(tiTicket),
+          new ActionRowBuilder().addComponents(tiUser),
           new ActionRowBuilder().addComponents(tiReason),
           new ActionRowBuilder().addComponents(tiAuth),
+          new ActionRowBuilder().addComponents(tiTicket),
         );
+
         return interaction.showModal(modal);
       }
 
@@ -304,7 +328,7 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Usuario', value: `<@${uid}> (\`${uid}\`)`, inline: true },
                 { name: 'Tipo', value: record.type.toUpperCase(), inline: true },
                 { name: 'Motivo', value: record.reason || '—' },
-                { name: 'Autor', value: `<@${aid}> (\`${aid}\`)`, inline: true },
+                { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)`, inline: true },
                 { name: 'Ticket', value: String(record.ticket), inline: true },
               );
             await ch.send({ embeds: [e] }).catch(() => {});
@@ -318,27 +342,38 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // Anular sanción
+      // Anular sanción — ahora exige Usuario + Ticket
       if (interaction.customId === 'modal_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
-        const ticketRaw = interaction.fields.getTextInputValue('ticket')?.trim();
-        const motivo    = interaction.fields.getTextInputValue('motivo')?.trim();
-        const autorRaw  = interaction.fields.getTextInputValue('autor')?.trim();
+        const rawUser  = interaction.fields.getTextInputValue('usuario')?.trim();
+        const motivo   = interaction.fields.getTextInputValue('motivo')?.trim();
+        const autorRaw = interaction.fields.getTextInputValue('autor')?.trim();
+        const ticketRaw= interaction.fields.getTextInputValue('ticket')?.trim();
 
-        const ticket = ticketRaw?.replace(/[^\d]/g, '');
-        const aid    = parseUser(autorRaw);
+        const uid   = parseUser(rawUser);
+        const aid   = parseUser(autorRaw);
+        const ticket= ticketRaw?.replace(/[^\d]/g, '');
 
-        if (!ticket || !motivo || !aid) {
-          return interaction.reply({ ephemeral: true, content: '⚠️ Datos inválidos. Revisa ticket/motivo/autor.' });
+        if (!uid || !ticket || !motivo || !aid) {
+          return interaction.reply({
+            ephemeral: true,
+            content: '⚠️ Datos inválidos. Revisa usuario/ticket/motivo/autor.'
+          });
         }
 
         ensureGuild(db, gid);
         const list = db.guilds[gid].sanctions || [];
-        const target = list.find(s => s.ticket == ticket && s.active);
+
+        // Solo anula si el ticket pertenece a ese usuario y está activo
+        const target = list.find(s => s.ticket == ticket && s.active && s.userId === uid);
         if (!target) {
-          return interaction.reply({ ephemeral: true, content: '⚠️ No se encontró una sanción activa con ese ticket.' });
+          return interaction.reply({
+            ephemeral: true,
+            content: '⚠️ No se encontró una sanción activa para ese usuario y ticket.'
+          });
         }
+
         target.active = false;
         target.annulReason = motivo;
         target.annulAuthorId = aid;
@@ -353,10 +388,10 @@ client.on('interactionCreate', async (interaction) => {
               .setTitle('♻️ Sanción anulada')
               .setFields(
                 { name: 'Usuario', value: `<@${target.userId}> (\`${target.userId}\`)`, inline: true },
-                { name: 'Tipo', value: target.type.toUpperCase(), inline: true },
-                { name: 'Motivo', value: target.reason || '—' },
                 { name: 'Ticket', value: String(ticket), inline: true },
-                { name: 'Anulación por', value: `<@${aid}> (\`${aid}\`)` },
+                { name: 'Tipo', value: target.type.toUpperCase(), inline: true },
+                { name: 'Motivo original', value: target.reason || '—' },
+                { name: 'Autoriza', value: `<@${aid}> (\`${aid}\`)` },
                 { name: 'Motivo de anulación', value: motivo || '—' },
               );
             await ch.send({ embeds: [e] }).catch(() => {});
