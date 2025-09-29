@@ -219,19 +219,21 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // ANULAR — orden: Usuario, Motivo, Staff que autoriza, Ticket
+      // ANULAR — orden: Usuario, Tipo, Motivo, Staff que autoriza, Ticket
       if (interaction.customId === 'btn_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
         const modal = new ModalBuilder().setCustomId('modal_anular').setTitle('Anular sanción');
 
         const tiUser = new TextInputBuilder().setCustomId('usuario').setLabel('Usuario (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
+        const tiType = new TextInputBuilder().setCustomId('tipo').setLabel('Tipo de sanción (warn o strike)').setStyle(TextInputStyle.Short).setRequired(true);
         const tiReason = new TextInputBuilder().setCustomId('motivo').setLabel('Motivo de anulación').setStyle(TextInputStyle.Paragraph).setRequired(true);
         const tiAuth = new TextInputBuilder().setCustomId('autor').setLabel('Staff que autoriza (mención o ID)').setStyle(TextInputStyle.Short).setRequired(true);
         const tiTicket = new TextInputBuilder().setCustomId('ticket').setLabel('Ticket').setStyle(TextInputStyle.Short).setRequired(true);
 
         modal.addComponents(
           new ActionRowBuilder().addComponents(tiUser),
+          new ActionRowBuilder().addComponents(tiType),
           new ActionRowBuilder().addComponents(tiReason),
           new ActionRowBuilder().addComponents(tiAuth),
           new ActionRowBuilder().addComponents(tiTicket),
@@ -355,30 +357,47 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
 
-      // ====== ANULAR SANCIÓN ======
+      // ====== ANULAR SANCIÓN (con TIPO) ======
       if (interaction.customId === 'modal_anular') {
         if (!(await ensureHasPanelRole(interaction))) return;
 
         const rawUser  = interaction.fields.getTextInputValue('usuario')?.trim();
+        const rawType  = interaction.fields.getTextInputValue('tipo')?.trim().toLowerCase();
         const motivo   = interaction.fields.getTextInputValue('motivo')?.trim();
         const autorRaw = interaction.fields.getTextInputValue('autor')?.trim();
         const ticketRaw= interaction.fields.getTextInputValue('ticket')?.trim();
 
         const uid   = parseUser(rawUser);
         const aid   = parseUser(autorRaw);
+        const tipo  = rawType === 'warn' || rawType === 'strike' ? rawType : null;
         const ticket= ticketRaw?.replace(/[^\d]/g, '');
 
-        if (!uid || !ticket || !motivo || !aid) {
-          return interaction.reply({ ephemeral: true, content: '⚠️ Datos inválidos. Revisa usuario/ticket/motivo/autor.' });
+        if (!uid || !tipo || !ticket || !motivo || !aid) {
+          return interaction.reply({
+            ephemeral: true,
+            content: '⚠️ Datos inválidos. Revisa usuario/tipo (warn/strike)/ticket/motivo/autor.'
+          });
         }
 
         ensureGuild(db, gid);
         const list = db.guilds[gid].sanctions || [];
 
-        // Solo anula si el ticket pertenece a ese usuario y está activo
-        const target = list.find(s => s.ticket == ticket && s.active && s.userId === uid);
+        // Buscar exactamente por usuario + tipo + ticket y que esté activa
+        let target = list.find(s => s.userId === uid && s.type === tipo && s.ticket == ticket && s.active);
+
+        // Fallback: si no aparece, intenta solo por ticket+usuario para sugerir el tipo correcto
         if (!target) {
-          return interaction.reply({ ephemeral: true, content: '⚠️ No se encontró una sanción activa para ese usuario y ticket.' });
+          const candidate = list.find(s => s.userId === uid && s.ticket == ticket && s.active);
+          if (candidate) {
+            return interaction.reply({
+              ephemeral: true,
+              content: `⚠️ La sanción con ticket ${ticket} para ese usuario es de tipo **${candidate.type.toUpperCase()}**. Escribe ese tipo exactamente.`
+            });
+          }
+          return interaction.reply({
+            ephemeral: true,
+            content: '⚠️ No se encontró una sanción activa para ese usuario, tipo y ticket.'
+          });
         }
 
         // Marcar anulación
@@ -414,12 +433,13 @@ client.on('interactionCreate', async (interaction) => {
           }
         } catch {}
 
-        // 3) DM al usuario avisando la anulación
+        // 3) DM al usuario avisando la anulación (incluye tipo)
         try {
           const eDM = baseEmbed()
             .setTitle('Tu sanción ha sido anulada')
             .setDescription(
               [
+                `**Tipo:** ${target.type.toUpperCase()}`,
                 `**Ticket:** ${ticket}`,
                 `**Motivo de anulación:** ${motivo}`,
                 `**Staff:** <@${aid}>`,
